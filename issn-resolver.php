@@ -1,4 +1,11 @@
 <?php
+/**
+ * This file is part of the {@link http://amsl.technology amls} project.
+ *
+ * @copyright Copyright (c) 2014, {@link http://amsl.technology amsl}
+ * @license http://opensource.org/licenses/gpl-license.php GNU General Public License (GPL)
+ */
+
 
 error_reporting( 0 );
 
