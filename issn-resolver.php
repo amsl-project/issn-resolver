@@ -1,6 +1,6 @@
 <?php
 /**
- * This file is part of the {@link http://amsl.technology amls} project.
+ * This file is part of the {@link http://amsl.technology amsl} project.
  *
  * @copyright Copyright (c) 2014, {@link http://amsl.technology amsl}
  * @license http://opensource.org/licenses/gpl-license.php GNU General Public License (GPL)
@@ -21,33 +21,43 @@ if ( isset( $_GET["issn"] ))
 	if ( preg_match( $pattern, $issn )) {
 
 		// $url, $def, $query points to the source
+		// The queried schema needs to be MARC21-xml instead of RDFxml because of the more detailed information
 		$query  = "http://services.dnb.de/sru/zdb?";
-		$query .= "version=1.1&operation=searchRetrieve&recordSchema=RDFxml";
+		$query .= "version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml";
 		$query .= "&query=iss%3D".$issn;
 
-		// $file shall be rdf/xml document as defined in the paragraph above
-		$file  = file_get_contents( $query );	
+
+		// $file shall be MARC21/xml document as defined in the paragraph above
+		$file  = file_get_contents( $query );
 		$sxe   = new SimpleXMLElement( $file );
 
 		// Register namespaces before ZDB response can be understand
-		$sxe -> registerXPathNamespace('rdf',   'http://www.w3.org/1999/02/22-rdf-syntax-ns#');
-		$sxe -> registerXPathNamespace('bibo',  'http://purl.org/ontology/bibo/');
-		$sxe -> registerXPathNamespace('umbel', 'http://umbel.org/umbel#');
+		$sxe -> registerXPathNamespace('slim', 'http://www.loc.gov/MARC21/slim') ;
 
-		// Climb along the xml tree path and extract parameters
-		$umbl_islike = $sxe->xpath('//rdf:Description/umbel:isLike/@rdf:*');
+		// xpath to ZDB number (in field 016$a where 016$2="DE-600") of a record containing the given issn in field 022$a:
+		$ZDB = $sxe->xpath('//slim:datafield[@tag="022"]/slim:subfield[@code="a" and contains(. ,"'.$issn.'")]/
+							ancestor::slim:record[1]/slim:datafield[@tag="016"]/slim:subfield[@code="2" and contains(.,"DE-600")]/
+							ancestor::slim:datafield[1]/slim:subfield[@code="a"]') ;
 
 		// if there are no hits, there is either no output or attachment
-		if ( count( $umbl_islike ) > 0 ) {
+		if ( count( $ZDB) > 0 ) {
 
+			// When asking for a MARC21, there are no explicit RDF resources defined in the answer.
+			// The RDF resource is build out of the prefix http://ld.zdb-services.de/resource/ and the ZDB number.
+			// Building the RDF-resource:
+
+			foreach ($ZDB as &$zdb) {
+			   $zdb = 'http://ld.zdb-services.de/resource/' . $zdb ;
+			}
+		
 			if ( $type == 'ttl'    ) { // submits turtle
-				echo turtlization ( $issn, $umbl_islike );
+				echo turtlization ( $issn, $ZDB );
 			} 
 			if ( $type == 'nt'     ) { // submits ntriples
-				echo ntfication ( $issn, $umbl_islike );
+				echo ntfication ( $issn, $ZDB );
 			}
 			if ( $type == 'jsonld' ) { // submits json/ld
-				echo jsonldfication ( $issn, $umbl_islike );
+				echo jsonldfication ( $issn, $ZDB );
 			}
 			
 		} else {
@@ -62,7 +72,7 @@ if ( isset( $_GET["issn"] ))
 	unset( $sxe   );
 	unset( $file  );
 	unset( $query );
-	unset( $umbl_islike );
+	unset( $ZDB );
 
 } else {
 	echo "Parameter not expected or does not exist.";
@@ -101,7 +111,7 @@ function parseAccept ($accept) {
 }
 
 
-function turtlization ($issn, $umbl_islike) {
+function turtlization ($issn, $_022a) {
 
 	// Turtlization
 	header('Content-Type: text/turtle');
@@ -111,9 +121,8 @@ function turtlization ($issn, $umbl_islike) {
 	$turtle_out .= "<urn:ISSN:".$issn."> umbel:isLike \n";
 	$separator   = "";
 	
-	while( list( , $uri ) = each( $umbl_islike )) {
+	while( list( , $uri ) = each( $_022a )) {
 		if ( preg_match( '/\(ISSN\)/', $uri )) continue;
-		$uri 	     = preg_replace( '/\/data\//', '/resource/', $uri );
 		$turtle_out .= $separator . "\t\t<" . $uri.">";
 		$separator   = " , \n";
 	}
@@ -121,7 +130,7 @@ function turtlization ($issn, $umbl_islike) {
 }
 
 
-function ntfication ( $issn, $umbl_islike ) {
+function ntfication ( $issn, $_022a ) {
 
 	// NT-fication
 	header('Content-Type: text/n-triples');
@@ -129,17 +138,16 @@ function ntfication ( $issn, $umbl_islike ) {
 
 	$ntriple_out = "";
 
-	while( list( , $uri ) = each( $umbl_islike )) {
+	while( list( , $uri ) = each( $_022a )) {
 		if ( preg_match( '/\(ISSN\)/', $uri )) continue;
 		$ntriple_out .= "<urn:ISSN:".$issn."> <http://umbel.org/umbel/isLike> ";
-		$uri 	      = preg_replace( '/\/data\//', '/resource/', $uri );
 		$ntriple_out .= "<" .$uri."> .\n";
 	}
 	return $ntriple_out;
 }
 
 
-function jsonldfication ( $issn, $umbl_islike ) {
+function jsonldfication ( $issn, $_022a ) {
 
 	// JSON-LD-fication
 	header('Content-Type: application/ld+json');
@@ -154,10 +162,9 @@ function jsonldfication ( $issn, $umbl_islike ) {
 	$json_out .= "\n\t\"umbel:isLike\": [\n";
 	$separator = "";
 
-	while( list( , $uri ) = each( $umbl_islike )) {
+	while( list( , $uri ) = each( $_022a )) {
 		if ( preg_match( '/\(ISSN\)/', $uri )) continue;
 		$json_out  .= $separator;
-		$uri	    = preg_replace( '/\/data\//', '/resource/', $uri );
 		$json_out  .= "\t\t \"$uri\"";
 		$separator  = ",\n";
 	}
